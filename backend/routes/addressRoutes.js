@@ -1,0 +1,11 @@
+import express from "express"
+import { addAddressController } from "../controllers/addressController.js";
+import { authMiddleware } from "../middlewares/authMiddleware.js";
+import { roleMiddleware } from "../middlewares/roleMiddleware.js";
+
+const addressRouter = express.Router();
+
+addressRouter.use(authMiddleware,roleMiddleware("USER"))
+addressRouter.post('/add',addAddressController)
+
+export default addressRouter;
