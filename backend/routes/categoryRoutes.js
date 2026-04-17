@@ -5,7 +5,7 @@ import { addCategoryController } from "../controllers/categoryController.js";
 
 const categoryRouter = express.Router();
 
-categoryRouter.use(authMiddleware,roleMiddleware("ADMIN","SUPER_ADMIN"))
-categoryRouter.post('/add',addCategoryController)
+categoryRouter.use(authMiddleware)
+categoryRouter.post('/add',roleMiddleware("ADMIN","SUPER_ADMIN"),addCategoryController)
 
 export default categoryRouter;

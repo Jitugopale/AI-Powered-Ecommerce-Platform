@@ -5,7 +5,7 @@ import { roleMiddleware } from "../middlewares/roleMiddleware.js";
 
 const addressRouter = express.Router();
 
-addressRouter.use(authMiddleware,roleMiddleware("USER"))
-addressRouter.post('/add',addAddressController)
+addressRouter.use(authMiddleware)
+addressRouter.post('/add',roleMiddleware("USER"),addAddressController)
 
 export default addressRouter;
