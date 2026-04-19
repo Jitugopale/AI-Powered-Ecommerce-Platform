@@ -31,7 +31,8 @@ model User{
   updatedAt DateTime @updatedAt
   role Roles @default(USER)
   adress Address[]
-  cart Cart?
+  cart Cart[]
+  order Order[]
   @@map("users")
 }
 
@@ -47,6 +48,7 @@ model Address{
   updatedAt DateTime @updatedAt
 
   user User @relation(fields: [userId],references: [id])
+  order Order[]
   @@map("address")
 }
 
@@ -76,6 +78,7 @@ model Product{
   category Categories @relation(fields: [categoryId],references: [id])
   inventory Inventory?
   cartItem CartItem[]
+  orderItem OrderItem[]
 
   @@map("products")
 }
@@ -93,15 +96,23 @@ model Inventory{
   @@map("inventory")
 }
 
+enum CartType{
+  REGULAR
+  BUY_NOW
+}
+
 model Cart{
   id Int @id @default(autoincrement())
-  userId Int @unique
+  userId Int 
+  cartType CartType @default(REGULAR)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id])
   cartItem CartItem[]
+
+  @@unique([userId,cartType])
 
   @@map("cart")
 }
@@ -118,5 +129,113 @@ model CartItem{
 
   cart Cart @relation(fields: [cartId], references: [id])
   product Product @relation(fields: [productId], references: [id])
+}
+
+  enum OrderStatus {
+    PENDING
+    CONFIRMED
+    PARTIALLY_DELIVERED
+    DELIVERED
+    CANCELLED
+  }
+
+enum OrderItemStatus {
+    PENDING
+    CONFIRMED
+    SHIPPED
+    OUT_FOR_DELIVERY
+    DELIVERED
+    CANCELLED
+    RETURN_REQUESTED
+    RETURNED
+}
+
+enum OrderSource{
+  CART
+  BUY_NOW
+}
+
+enum InvoiceStatus{
+  UNPAID
+  PAID
+  CANCELLED
+}
+
+enum PaymentStatus{
+  PENDING
+  PAID
+  FAILED
+  PARTIALLY_REFUNDED
+  REFUNDED
+}
+model Order{
+  id Int @id @default(autoincrement())
+  userId Int
+  addressId Int
+  totalAmount Decimal @db.Decimal(10,2)
+  status OrderStatus @default(PENDING)
+  source OrderSource @default(CART)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+  address Address @relation(fields: [addressId], references: [id])
+
+  orderItem OrderItem[]
+  payment Payment?
+  invoice Invoice?
+
+  @@map("orders")
+}
+
+model OrderItem{
+  id Int @id @default(autoincrement())
+  orderId Int
+  productId Int
+  quantity Int
+  price Decimal @db.Decimal(10,2)
+  status OrderItemStatus @default(PENDING)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
+
+  @@map("order_items")
+}
+
+model Payment{
+  id Int @id @default(autoincrement())
+  orderId Int @unique
+  amount Decimal @db.Decimal(10,2)
+  refundAmount Decimal? @db.Decimal(10,2)
+  status PaymentStatus @default(PENDING)
+  razorpayOrderId String? @unique
+  razorpayPaymentId String? @unique
+  razorpaySignature String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id])
+  invoice Invoice?
+
+  @@map("payments")
+}
+
+model Invoice{
+  id Int @id @default(autoincrement())
+  orderId Int @unique
+  paymentId Int @unique
+  invoiceNumber String @unique
+  status InvoiceStatus @default(UNPAID)
+  issuedAt DateTime @default(now())
+  paidAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id])
+  payment Payment @relation(fields: [paymentId], references: [id])
+
+  @@map("invoices")
 }
 

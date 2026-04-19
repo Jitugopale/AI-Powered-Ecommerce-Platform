@@ -42,11 +42,15 @@ export const addToCartController = async(req,res) =>{
 
          const cart = await tx.cart.upsert({
         where:{
-            userId:Number(req.user.id)
+            userId_cartType:{
+                userId:Number(req.user.id),
+                cartType:"REGULAR"
+            }
         },
         update:{},
         create:{
-            userId:Number(req.user.id)
+            userId:Number(req.user.id),
+            cartType:"REGULAR"
         }
     })
 
@@ -125,9 +129,12 @@ export const viewCartController = async(req,res) =>{
             })
         }
 
-        const cart = await prisma.cart.findFirst({
+        const cart = await prisma.cart.findUnique({
             where:{
-                userId:userId
+                userId_cartType:{
+                    userId:userId,
+                    cartType:"REGULAR"
+                }
             }
         })
 
@@ -202,9 +209,12 @@ export const decrementToCartController = async(req,res) =>{
         throw new Error("Inventory not found, stock not available")
     }
 
-    const cart = await tx.cart.findFirst({
+    const cart = await tx.cart.findUnique({
         where:{
-            userId:Number(req.user.id)
+            userId_cartType:{
+                userId:Number(req.user.id),
+                cartType:"REGULAR"
+            }
         }
     })
 
@@ -290,9 +300,12 @@ export const removeFromCartController = async(req,res)=>{
 
     const userId = Number(req.user.id);
      try {
-        const cart = await prisma.cart.findFirst({
+        const cart = await prisma.cart.findUnique({
             where:{
-                userId:userId
+                userId_cartType:{
+                    userId:userId,
+                    cartType:"REGULAR"
+                }
             }
         })
 
@@ -341,9 +354,12 @@ export const removeFromCartController = async(req,res)=>{
 export const clearCartController = async(req,res)=>{
     const userId = Number(req.user.id);
      try {
-        const cart = await prisma.cart.findFirst({
+        const cart = await prisma.cart.findUnique({
             where:{
-                userId:userId
+                userId_cartType:{
+                    userId:userId,
+                    cartType:"REGULAR"
+                }
             }
         })
 
@@ -379,5 +395,98 @@ export const clearCartController = async(req,res)=>{
         return res.status(500).json({
             message:"Failed to clear items from cart"
         })
+    }
+}
+
+export const buyNowController = async(req,res)=>{
+    const {productId, quantity}  = req.body;
+    const parsedProductId = Number(productId);
+    const parsedQuantity = Number(quantity);
+
+
+    if(!productId || !quantity || parsedQuantity <= 0){
+        return res.status(400).json({
+            message:"Valid Product ID and Quantity are required"
+        })
+    }
+
+
+    try {
+         const product = await prisma.product.findFirst({
+        where:{
+            id:parsedProductId,
+            is_active:true
+        }
+    })
+
+    if(!product){
+        return res.status(404).json({
+            message:"Product Not Found"
+        })
+    }
+    const cartItem = await prisma.$transaction(async(tx)=>{
+
+
+    const inventory = await tx.inventory.findFirst({
+        where:{
+            productId:parsedProductId
+        }
+    })
+
+    if (!inventory) {
+        throw new Error("Inventory not found, stock not available")
+    }
+
+    if(inventory.quantity < parsedQuantity){
+        throw new Error(`Only ${inventory.quantity} available`)
+    }
+
+         const cart = await tx.cart.upsert({
+        where:{
+            userId_cartType:{
+                userId:Number(req.user.id),
+                cartType:"BUY_NOW"
+            }
+        },
+        update:{},
+        create:{
+            userId:Number(req.user.id),
+            cartType:"BUY_NOW"
+        }
+    })
+
+    
+    await tx.cartItem.deleteMany({
+        where:{
+            cartId:cart.id
+        }
+    })
+
+    const cartItem = await tx.cartItem.create({
+        data:{
+            cartId:cart.id,
+            productId:parsedProductId,
+            quantity:parsedQuantity
+        }
+    })
+
+
+
+    return cartItem;
+
+    })
+
+   
+    return res.status(200).json({
+        message:"added item to cart successfully",
+        data:cartItem
+    })
+    } catch (error) {
+        if(error.message?.includes("available") || error.message?.includes("Inventory")){
+            return res.status(400).json({
+                message:error.message
+            })
+        }
+        return res.status(500).json({ message: "Failed to add item to cart" })
     }
 }
