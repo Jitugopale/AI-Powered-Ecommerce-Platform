@@ -35,6 +35,7 @@ export const addProductController = async (req, res) => {
       data: product,
     });
   } catch (error) {
+    console.error(error)
     return res
       .status(500)
       .json({ message: "Failed to add product and inventory" });
@@ -49,11 +50,12 @@ export const getAllActiveProductsController = async (req, res) => {
         }
     })
 
-    return res.status(201).json({
+    return res.status(200).json({
       message: "All Active Products fetch Successfully",
       data: product,
     });
   } catch (error) {
+    console.error(error)
     return res
       .status(500)
       .json({ message: "Failed to get all active products" });
@@ -74,11 +76,12 @@ export const getProductByIdController = async (req, res) => {
         })
     }
 
-    return res.status(201).json({
+    return res.status(200).json({
       message: "Product fetch Successfully",
       data: product,
     });
   } catch (error) {
+    console.error(error)
     return res
       .status(500)
       .json({ message: "Failed to get product" });

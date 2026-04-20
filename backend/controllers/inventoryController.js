@@ -3,9 +3,9 @@ import { prisma } from "../services/prisma.js";
 export const addInventoryStockController = async (req, res) => {
   try {
     const { quantity } = req.body;
-    if (!quantity) {
+    if (quantity <=0 || quantity === null || quantity === undefined) {
       return res.status(400).json({
-        message: "quantity is required",
+        message: "quantity is required and valid",
       });
     }
 
@@ -37,6 +37,7 @@ export const addInventoryStockController = async (req, res) => {
         data:stock
     })
   } catch (error) {
+    console.error(error)
     return res.status(500).json({ message: "Failed to add stock quantity" });
   }
 };
@@ -44,9 +45,9 @@ export const addInventoryStockController = async (req, res) => {
 export const removeInventoryStockController = async (req, res) => {
   try {
     const { quantity } = req.body;
-    if (!quantity) {
+    if (quantity <= 0 || quantity === null || quantity === undefined) {
       return res.status(400).json({
-        message: "quantity is required",
+        message: "quantity is required and valid",
       });
     }
 
@@ -84,6 +85,7 @@ export const removeInventoryStockController = async (req, res) => {
         data:stock
     })
   } catch (error) {
+    console.error(error)
     return res.status(500).json({ message: "Failed to remove stock quantity" });
   }
 };

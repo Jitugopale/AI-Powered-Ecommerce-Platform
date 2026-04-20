@@ -104,6 +104,7 @@ export const addToCartController = async(req,res) =>{
         data:cartItem
     })
     } catch (error) {
+        console.error(error)
         if(error.message?.includes("available") || error.message?.includes("Inventory")){
             return res.status(400).json({
                 message:error.message
@@ -165,6 +166,7 @@ export const viewCartController = async(req,res) =>{
         data:cartItem
     })
     } catch (error) {
+        console.error(error)
         return res.status(500).json({ message: "Failed to fetched Cart" })
     }
   
@@ -279,6 +281,7 @@ export const decrementToCartController = async(req,res) =>{
         data:cartItem
     })
     } catch (error) {
+        console.error(error)
         if(error.message?.includes("Inventory") || error.message?.includes("Cart")){
             return res.status(400).json({
                 message:error.message
@@ -344,6 +347,7 @@ export const removeFromCartController = async(req,res)=>{
             data:deleteItem
         })
     } catch (error) {
+        console.error(error)
         return res.status(500).json({
             message:"Failed to remove item from cart"
         })
@@ -392,6 +396,7 @@ export const clearCartController = async(req,res)=>{
             data:deleteItems
         })
     } catch (error) {
+        console.error(error)
         return res.status(500).json({
             message:"Failed to clear items from cart"
         })
@@ -482,6 +487,7 @@ export const buyNowController = async(req,res)=>{
         data:cartItem
     })
     } catch (error) {
+        console.error(error)
         if(error.message?.includes("available") || error.message?.includes("Inventory")){
             return res.status(400).json({
                 message:error.message

@@ -38,7 +38,7 @@ model User{
 
 model Address{
   id Int @id @default(autoincrement())
-  userId Int @unique
+  userId Int 
   addressline String
   state String
   city String

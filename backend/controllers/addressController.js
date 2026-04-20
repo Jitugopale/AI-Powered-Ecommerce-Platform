@@ -26,6 +26,7 @@ export const addAddressController = async(req,res)=>{
         data:address
     })
     } catch (error) {
+        console.error(error)
         return res.status(500).json({message:"Failed to add address"})
     }
 }
