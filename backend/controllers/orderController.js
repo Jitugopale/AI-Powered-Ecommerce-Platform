@@ -468,3 +468,39 @@ export const verifyPaymentController = async (req, res) => {
     });
   }
 };
+
+export const getMyOrdersController = async(req,res) =>{
+  const userId = Number(req.user.id);
+
+  try {
+    const order = await prisma.order.findFirst({
+      where:{
+        userId:userId
+      },
+      include:{
+        orderItem:{
+          include:{
+            product:true
+          }
+        },
+        address:true,
+        payment:true,
+        invoice:true
+      },
+      orderBy:{
+        createdAt:"desc"
+      }
+    })
+
+    return res.status(200).json({
+      message:"Orders fetched Successfully",
+      data:order
+    })
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      message: "Failed to fetch orders",
+    });
+  }
+
+}
