@@ -380,19 +380,19 @@ export const verifyPaymentController = async (req, res) => {
 
     if (payment.status === "PAID") {
       const invoice = await prisma.invoice.findUnique({
-        where:{
-          orderId:payment.order.id
-        }
-      })
+        where: {
+          orderId: payment.order.id,
+        },
+      });
       return res.status(400).json({
         message: "Payment already verified",
-         data: {                                                                                           
-            orderId: payment.order.id,                                                                      
-            razorpayPaymentId: payment.razorpayPaymentId,                                                   
-            invoiceNumber: invoice?.invoiceNumber,                                                          
-            orderStatus: payment.order.status,                                                              
-            amount: payment.amount,                                                                         
-        }, 
+        data: {
+          orderId: payment.order.id,
+          razorpayPaymentId: payment.razorpayPaymentId,
+          invoiceNumber: invoice?.invoiceNumber,
+          orderStatus: payment.order.status,
+          amount: payment.amount,
+        },
       });
     }
 
@@ -411,7 +411,7 @@ export const verifyPaymentController = async (req, res) => {
         data: {
           razorpayPaymentId: razorpay_payment_id,
           razorpaySignature: razorpay_signature,
-          status:"PAID"
+          status: "PAID",
         },
       });
 
@@ -442,24 +442,24 @@ export const verifyPaymentController = async (req, res) => {
         });
       }
 
-      return {                                                                                            
-          orderId: payment.order.id,                                                                        
-          razorpayPaymentId: razorpay_payment_id,                                                           
-          invoiceNumber: invoice.invoiceNumber,                                                             
-          orderStatus: "CONFIRMED",                                                                         
-          amount: payment.amount,                                                                           
-      }; 
+      return {
+        orderId: payment.order.id,
+        razorpayPaymentId: razorpay_payment_id,
+        invoiceNumber: invoice.invoiceNumber,
+        orderStatus: "CONFIRMED",
+        amount: payment.amount,
+      };
     });
 
     return res.status(200).json({
       message: "Payment verified successfully",
-      data: {                                                                                             
-          orderId: result.orderId,                                                                          
-          razorpayPaymentId: result.razorpayPaymentId,                                                      
-          invoiceNumber: result.invoiceNumber,                                                              
-          orderStatus: result.orderStatus,                                                                  
-          amount: result.amount,                                                                            
-      }, 
+      data: {
+        orderId: result.orderId,
+        razorpayPaymentId: result.razorpayPaymentId,
+        invoiceNumber: result.invoiceNumber,
+        orderStatus: result.orderStatus,
+        amount: result.amount,
+      },
     });
   } catch (error) {
     console.error(error);
@@ -469,38 +469,186 @@ export const verifyPaymentController = async (req, res) => {
   }
 };
 
-export const getMyOrdersController = async(req,res) =>{
+// What is Pagination?
+
+//   Imagine you have 100 orders in the database. Sending all 100 at once is slow and wastes bandwidth. Pagination splits them
+//   into pages — like a book.
+
+//   Example: 10 orders per page
+//   - Page 1 → orders 1–10
+//   - Page 2 → orders 11–20
+//   - Page 3 → orders 21–30
+
+// Two query params come from the frontend:
+//   - page — which page number (e.g. 1, 2, 3)
+//   - limit — how many items per page (e.g. 10)
+// The math:
+//   skip = (page - 1) * limit
+
+//   Page 1: skip = (1-1) * 10 = 0   → start from row 0
+//   Page 2: skip = (2-1) * 10 = 10  → skip first 10, start from row 10
+//   Page 3: skip = (3-1) * 10 = 20  → skip first 20, start from row 20
+export const getMyOrdersController = async (req, res) => {
   const userId = Number(req.user.id);
+  const page = Number(req.query.page) || 1;
+  const limit = Number(req.query.limit) || 10;
+  const skip = (page - 1) * limit;
 
   try {
-    const order = await prisma.order.findFirst({
-      where:{
-        userId:userId
+    const totalOrders = await prisma.order.count({
+      where: {
+        userId: userId,
       },
-      include:{
-        orderItem:{
-          include:{
-            product:true
-          }
+    });
+
+    const orders = await prisma.order.findMany({
+      where: {
+        userId: userId,
+      },
+      include: {
+        orderItem: {
+          include: {
+            product: true,
+          },
         },
-        address:true,
-        payment:true,
-        invoice:true
+        address: true,
+        payment: true,
+        invoice: true,
       },
-      orderBy:{
-        createdAt:"desc"
-      }
-    })
+      orderBy: {
+        createdAt: "desc",
+      },
+      skip: skip, //skip → how many records to ignore
+      take: limit, //take → how many records to fetch
+    });
+
+    const totalPages = Math.ceil(totalOrders / limit);
 
     return res.status(200).json({
-      message:"Orders fetched Successfully",
-      data:order
-    })
+      message: "Orders fetched Successfully",
+      data: orders,
+      pagination: {
+        totalOrders,
+        totalPages,
+        currentPage: page,
+        limit,
+        hasNextPage: page < totalPages,
+        hasPrevPage: page > 1,
+      },
+    });
   } catch (error) {
     console.error(error);
     return res.status(500).json({
       message: "Failed to fetch orders",
     });
   }
+};
+export const getMyOrderByIdController = async (req, res) => {
+  const userId = Number(req.user.id);
+  const orderId = Number(req.params.orderId);
 
-}
+  if (isNaN(orderId)) {
+    return res.status(400).json({
+      message: "Invalid orderId",
+    });
+  }
+  try {
+    const order = await prisma.order.findFirst({
+      where: {
+        id: orderId,
+        userId: userId,
+      },
+      include: {
+        orderItem: {
+          include: {
+            product: true,
+          },
+        },
+        address: true,
+        payment: true,
+        invoice: true,
+      },
+    });
+
+    if (!order) {
+      return res.status(404).json({
+        message: "Order not found",
+      });
+    }
+
+    return res.status(200).json({
+      message: "Order fetched successfully",
+      data: order,
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      message: "Failed to fetch order",
+    });
+  }
+};
+
+export const adminGetAllOrdersController = async (req, res) => {
+  const page = Number(req.query.page) || 1;
+  const limit = Number(req.query.limit) || 10;
+  const skip = (page - 1) * limit;
+
+  const status = req.query.status;
+  if(status && !["PENDING","CONFIRMED","PARTIALLY_DELIVERED","DELIVERED","CANCELLED"].includes(status)){
+    return res.status(400).json({
+      message:"Invalid status"
+    })
+  }
+  const userId = req.query.userId ? Number(req.query.userId) : null;
+  if (req.query.userId && isNaN(userId)) {
+    return res.status(400).json({
+      message:"Invalid userId"
+    });
+  }
+
+  try {
+    const where = {};
+    if (status) where.status = status;
+    if (userId) where.userId = userId;
+    const totalOrders = await prisma.order.count({ where });
+
+    const order = await prisma.order.findMany({
+      where: where,
+      include: {
+        orderItem: {
+          include: {
+            product: true,
+          },
+        },
+        address: true,
+        payment: true,
+        invoice: true,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+      skip: skip,
+      take: limit,
+    });
+
+    const totalPages = Math.ceil(totalOrders / limit);
+
+    return res.status(200).json({
+      message: "All Orders fetched successfully",
+      data: order,
+      pagination: {
+        totalOrders,
+        totalPages,
+        currentPage: page,
+        limit,
+        hasNextPage: page < totalPages,
+        hasPrevPage: page > 1,
+      },
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      message: "Failed to fetch all orders",
+    });
+  }
+};
