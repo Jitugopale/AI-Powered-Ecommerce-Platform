@@ -136,6 +136,7 @@ model CartItem{
     CONFIRMED
     PARTIALLY_DELIVERED
     DELIVERED
+    PARTIALLY_CANCELLED
     CANCELLED
   }
 
@@ -183,7 +184,7 @@ model Order{
 
   orderItem OrderItem[]
   payment Payment?
-  invoice Invoice?
+  invoice Invoice[]
 
   @@map("orders")
 }
@@ -195,11 +196,20 @@ model OrderItem{
   quantity Int
   price Decimal @db.Decimal(10,2)
   status OrderItemStatus @default(PENDING)
+  confirmedAt       DateTime?
+  shippedAt         DateTime?
+  outForDeliveryAt  DateTime?
+  deliveredAt       DateTime?
+  cancelledAt       DateTime?
+  returnRequestedAt DateTime?
+  returnedAt        DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   order Order @relation(fields: [orderId], references: [id])
   product Product @relation(fields: [productId], references: [id])
+  invoice Invoice?
 
   @@map("order_items")
 }
@@ -217,23 +227,26 @@ model Payment{
   updatedAt DateTime @updatedAt
 
   order Order @relation(fields: [orderId], references: [id])
-  invoice Invoice?
+  invoice Invoice[]
 
   @@map("payments")
 }
 
 model Invoice{
   id Int @id @default(autoincrement())
-  orderId Int @unique
-  paymentId Int @unique
+  orderId Int 
+  orderItemId Int? @unique
+  paymentId Int 
   invoiceNumber String @unique
   status InvoiceStatus @default(UNPAID)
   issuedAt DateTime @default(now())
   paidAt DateTime?
+  cancelledAt DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   order Order @relation(fields: [orderId], references: [id])
+  orderItem OrderItem? @relation(fields: [orderItemId], references: [id])
   payment Payment @relation(fields: [paymentId], references: [id])
 
   @@map("invoices")

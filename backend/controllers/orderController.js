@@ -183,15 +183,19 @@ export const checkoutController = async (req, res) => {
         },
       });
 
-      await tx.orderItem.createMany({
-        data: cartItems.map((item) => ({
-          orderId: order.id,
-          productId: item.productId,
-          quantity: item.quantity,
-          price: item.product.price,
-          status: "PENDING",
-        })),
-      });
+      const createdOrderItems = [];
+      for (const item of cartItems) {
+        const orderItem = await tx.orderItem.create({
+          data: {
+            orderId: order.id,
+            productId: item.productId,
+            quantity: item.quantity,
+            price: item.product.price,
+            status: "PENDING",
+          },
+        });
+        createdOrderItems.push(orderItem);
+      }
 
       for (let item of cartItems) {
         await tx.inventory.update({
@@ -230,16 +234,20 @@ export const checkoutController = async (req, res) => {
       //.slice(0, 10) - 2026-04-19
       //.replace(/-/g, "") - 20260419
       const datePart = today.toISOString().slice(0, 10).replace(/-/g, "");
-      const invoiceNumber = `INV-${datePart}-${uuidv4().slice(0, 6)}`; //INV-20260419-a3f9c1
+      
 
-      await tx.invoice.create({
+      for(let item of createdOrderItems){
+        const invoiceNumber = `INV-${datePart}-${uuidv4().slice(0, 6)}`; //INV-20260419-a3f9c1
+        await tx.invoice.create({
         data: {
           orderId: order.id,
+          orderItemId:item.id,
           paymentId: payment.id,
           invoiceNumber: invoiceNumber,
           status: "UNPAID",
         },
       });
+      }
 
       return { order, payment };
     });
@@ -379,7 +387,7 @@ export const verifyPaymentController = async (req, res) => {
     }
 
     if (payment.status === "PAID") {
-      const invoice = await prisma.invoice.findUnique({
+      const invoice = await prisma.invoice.findMany({
         where: {
           orderId: payment.order.id,
         },
@@ -389,7 +397,7 @@ export const verifyPaymentController = async (req, res) => {
         data: {
           orderId: payment.order.id,
           razorpayPaymentId: payment.razorpayPaymentId,
-          invoiceNumber: invoice?.invoiceNumber,
+          invoiceNumber: invoice.map(inv => inv.invoiceNumber),
           orderStatus: payment.order.status,
           amount: payment.amount,
         },
@@ -424,7 +432,7 @@ export const verifyPaymentController = async (req, res) => {
         },
       });
 
-      const invoice = await tx.invoice.update({
+      await tx.invoice.updateMany({
         where: {
           orderId: payment.order.id,
         },
@@ -445,7 +453,6 @@ export const verifyPaymentController = async (req, res) => {
       return {
         orderId: payment.order.id,
         razorpayPaymentId: razorpay_payment_id,
-        invoiceNumber: invoice.invoiceNumber,
         orderStatus: "CONFIRMED",
         amount: payment.amount,
       };
@@ -456,7 +463,6 @@ export const verifyPaymentController = async (req, res) => {
       data: {
         orderId: result.orderId,
         razorpayPaymentId: result.razorpayPaymentId,
-        invoiceNumber: result.invoiceNumber,
         orderStatus: result.orderStatus,
         amount: result.amount,
       },
@@ -594,15 +600,25 @@ export const adminGetAllOrdersController = async (req, res) => {
   const skip = (page - 1) * limit;
 
   const status = req.query.status;
-  if(status && !["PENDING","CONFIRMED","PARTIALLY_DELIVERED","DELIVERED","CANCELLED"].includes(status)){
+  if (
+    status &&
+    ![
+      "PENDING",
+      "CONFIRMED",
+      "PARTIALLY_DELIVERED",
+      "DELIVERED",
+      "PARTIALLY_CANCELLED",
+      "CANCELLED",
+    ].includes(status)
+  ) {
     return res.status(400).json({
-      message:"Invalid status"
-    })
+      message: "Invalid status",
+    });
   }
   const userId = req.query.userId ? Number(req.query.userId) : null;
   if (req.query.userId && isNaN(userId)) {
     return res.status(400).json({
-      message:"Invalid userId"
+      message: "Invalid userId",
     });
   }
 
