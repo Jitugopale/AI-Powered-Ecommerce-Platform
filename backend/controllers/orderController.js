@@ -6,6 +6,7 @@ import { razorpay } from "../services/razorpay.js";
 //SHA256 = the hashing algorithm
 //crypto is used to recreate Razorpay's signature so you can verify the payment request is genuine and not tampered with.
 import crypto from "crypto";
+import { includes } from "zod";
 
 export const checkoutController = async (req, res) => {
   const { addressId, cartType } = req.body;
@@ -234,19 +235,18 @@ export const checkoutController = async (req, res) => {
       //.slice(0, 10) - 2026-04-19
       //.replace(/-/g, "") - 20260419
       const datePart = today.toISOString().slice(0, 10).replace(/-/g, "");
-      
 
-      for(let item of createdOrderItems){
+      for (let item of createdOrderItems) {
         const invoiceNumber = `INV-${datePart}-${uuidv4().slice(0, 6)}`; //INV-20260419-a3f9c1
         await tx.invoice.create({
-        data: {
-          orderId: order.id,
-          orderItemId:item.id,
-          paymentId: payment.id,
-          invoiceNumber: invoiceNumber,
-          status: "UNPAID",
-        },
-      });
+          data: {
+            orderId: order.id,
+            orderItemId: item.id,
+            paymentId: payment.id,
+            invoiceNumber: invoiceNumber,
+            status: "UNPAID",
+          },
+        });
       }
 
       return { order, payment };
@@ -397,7 +397,7 @@ export const verifyPaymentController = async (req, res) => {
         data: {
           orderId: payment.order.id,
           razorpayPaymentId: payment.razorpayPaymentId,
-          invoiceNumber: invoice.map(inv => inv.invoiceNumber),
+          invoiceNumber: invoice.map((inv) => inv.invoiceNumber),
           orderStatus: payment.order.status,
           amount: payment.amount,
         },
@@ -666,5 +666,484 @@ export const adminGetAllOrdersController = async (req, res) => {
     return res.status(500).json({
       message: "Failed to fetch all orders",
     });
+  }
+};
+
+export const cancelOrderItemController = async (req, res) => {
+  const userId = Number(req.user.id);
+  const orderItemId = Number(req.params.orderItemId);
+
+  if (isNaN(orderItemId)) {
+    return res.status(400).json({
+      message: "Invalid OrderItemId",
+    });
+  }
+
+  try {
+    const orderItem = await prisma.orderItem.findFirst({
+      where: {
+        id: orderItemId,
+      },
+      include: {
+        order: {
+          include: {
+            payment: true,
+          },
+        },
+      },
+    });
+
+    if (!orderItem) {
+      return res.status(404).json({
+        message: "Order item not found",
+      });
+    }
+
+    if (orderItem.order.userId !== userId) {
+      return res.status(403).json({
+        message: "You are not authorized to cancel this item",
+      });
+    }
+
+    if (orderItem.status === "CANCELLED") {
+      //409 Conflict — the request is valid but conflicts with the current state of the resource
+      return res.status(409).json({
+        message: "Item is already cancelled",
+      });
+    }
+
+    if (orderItem.status === "DELIVERED") {
+      return res.status(409).json({
+        message:
+          "Item already delivered. Please use the return option instead.",
+      });
+    }
+
+    if (
+      ["OUT_FOR_DELIVERY", "SHIPPED", "RETURN_REQUESTED", "RETURNED"].includes(
+        orderItem.status,
+      )
+    ) {
+      return res.status(409).json({
+        message: `Item cannot be cancelled at this stage. Current status: ${orderItem.status}.`,
+      });
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      await tx.orderItem.update({
+        where: {
+          id: orderItemId,
+        },
+        data: {
+          status: "CANCELLED",
+          cancelledAt: new Date(),
+        },
+      });
+
+      await tx.inventory.update({
+        where: {
+          productId: orderItem.productId,
+        },
+        data: {
+          quantity: {
+            increment: orderItem.quantity,
+          },
+        },
+      });
+
+      const invoice = await tx.invoice.update({
+        where: {
+          orderItemId: orderItemId,
+        },
+        data: {
+          status: "CANCELLED",
+          cancelledAt: new Date(),
+        },
+      });
+
+      const allOrderItems = await tx.orderItem.findMany({
+        where: {
+          orderId: orderItem.orderId,
+        },
+      });
+
+      const allCancelled = allOrderItems.every((i) => i.status === "CANCELLED");
+      const anyDelivered = allOrderItems.some((i) => i.status === "DELIVERED");
+      //every() returns true only if ALL items pass the condition. If even one item is not CANCELLED, it returns false.
+
+      let newOrderStatus;
+      if (allCancelled) {
+        newOrderStatus = "CANCELLED";
+      } else if (anyDelivered) {
+        newOrderStatus = "PARTIALLY_DELIVERED";
+      } else {
+        newOrderStatus = "PARTIALLY_CANCELLED";
+      }
+
+      await tx.order.update({
+        where: {
+          id: orderItem.orderId,
+        },
+        data: {
+          status: newOrderStatus,
+        },
+      });
+
+      let itemRefund = 0;
+      if (
+        ["PAID", "PARTIALLY_REFUNDED"].includes(orderItem.order.payment.status)
+      ) {
+        itemRefund = Number(orderItem.price) * orderItem.quantity;
+        const newRefundAmount =
+          Number(orderItem.order.payment.refundAmount ?? 0) + itemRefund;
+        //?? 0 - If the value is null or undefined, use 0 instead
+        const newPaymentStatus =
+          newRefundAmount >= Number(orderItem.order.payment.amount)
+            ? "REFUNDED"
+            : "PARTIALLY_REFUNDED";
+        await tx.payment.update({
+          where: {
+            id: orderItem.order.payment.id,
+          },
+          data: {
+            refundAmount: newRefundAmount,
+            status: newPaymentStatus,
+          },
+        });
+      }
+
+      return { itemRefund, invoice };
+    });
+
+    const payment = orderItem.order.payment;
+    if (
+      ["PAID", "PARTIALLY_REFUNDED"].includes(payment.status) &&
+      result.itemRefund > 0
+    ) {
+      try {
+        //razorpay.payments.refund(...)
+        //This is a method from the Razorpay SDK
+        //Used to initiate a refund
+        const razorpayRefund = await razorpay.payments.refund(
+          payment.razorpayPaymentId,
+          //This is the payment ID got when user
+          //Razorpay uses this to know which payment to refund
+          {
+            amount: Math.round(result.itemRefund * 100),
+            //Math.round() ensures no decimal issues
+            speed: "normal",
+            //Controls how fast refund is processed:
+            // "normal" → 5–7 working days
+            // "optimum" → faster (if supported)
+            notes: { reason: "Item cancelled by user" },
+            //Stored in Razorpay dashboard
+          },
+        );
+
+        try {
+          await prisma.invoice.update({
+            where: {
+              id: result.invoice.id,
+            },
+            data: {
+              razorpayRefundId: razorpayRefund.id,
+            },
+          });
+        } catch (error) {
+          console.error(
+            "Failed to save razorpayRefundId. Manual update needed. refundId:",
+            razorpayRefund.id,
+            error,
+          );
+        }
+
+        return res.status(200).json({
+          message: "Item cancelled and refund initiated successfully",
+          data: {
+            orderItemId,
+            refundAmount: result.itemRefund,
+            razorpayRefundId: razorpayRefund.id,
+          },
+        });
+      } catch (razorpayError) {
+        console.error(razorpayError);
+        return res.status(200).json({
+          message:
+            "Item cancelled. Refund will be processed within 5-7 business days.",
+          data: {
+            orderItemId,
+            refundAmount: result.itemRefund,
+          },
+        });
+      }
+    }
+
+    return res.status(200).json({
+      message: "Item cancelled successfully",
+      data: { orderItemId },
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      message: "Failed to cancel OrderItem",
+    });
+  }
+};
+
+export const adminUpdateOrderItemStatusController = async (req, res) => {
+  const orderItemId = Number(req.params.orderItemId);
+  const { status } = req.body;
+
+  if (isNaN(orderItemId)) {
+    return res.status(400).json({ message: "Invalid orderItemId" });
+  }
+
+  const allowedStatuses = [
+    "PENDING",
+    "CONFIRMED",
+    "SHIPPED",
+    "OUT_FOR_DELIVERY",
+    "DELIVERED",
+  ];
+
+  if (!status || !allowedStatuses.includes(status)) {
+    return res.status(400).json({ message: "Invalid status" });
+  }
+
+  try {
+    const orderItem = await prisma.orderItem.findFirst({
+      where: {
+        id: orderItemId,
+      },
+    });
+
+    if (!orderItem) {
+      return res.status(404).json({ message: "Order item not found" });
+    }
+
+    //Each status has its own timestamp column in the DB (confirmedAt, shippedAt etc). When admin sets status to SHIPPED, want to save the exact time it was shipped.
+
+    const now = new Date();
+    const timestampField = {
+      PENDING: {
+        confirmedAt: null,
+        shippedAt: null,
+        outForDeliveryAt: null,
+        deliveredAt: null,
+      },
+      CONFIRMED: {
+        confirmedAt: now,
+        shippedAt: null, // clear forward
+        outForDeliveryAt: null, // clear forward
+        deliveredAt: null, // clear forward
+      },
+      SHIPPED: {
+        // confirmedAt → NOT touched
+        shippedAt: now,
+        outForDeliveryAt: null, // clear forward
+        deliveredAt: null, // clear forward
+      },
+      OUT_FOR_DELIVERY: {
+        // confirmedAt → NOT touched
+        // shippedAt → NOT touched
+        outForDeliveryAt: now,
+        deliveredAt: null, // clear forward
+      },
+      DELIVERED: {
+        // confirmedAt → NOT touched
+        // shippedAt → NOT touched
+        // outForDeliveryAt → NOT touched
+        deliveredAt: now,
+      },
+    };
+
+    //Restrictions to Status
+    const validTransitions = {
+      PENDING: ["CONFIRMED"],
+      CONFIRMED: ["SHIPPED", "PENDING"],
+      SHIPPED: ["OUT_FOR_DELIVERY", "CONFIRMED"],
+      OUT_FOR_DELIVERY: ["DELIVERED", "SHIPPED"],
+      DELIVERED: ["OUT_FOR_DELIVERY"],
+    };
+
+    if (!validTransitions[orderItem.status]?.includes(status)) {
+      return res.status(400).json({
+        message: `Invalid transition. Current: ${orderItem.status}, Requested: ${status}`,
+      });
+    }
+
+    //orderItem.status = "PENDING"
+    // validTransitions["PENDING"] = ["CONFIRMED"]   ← only CONFIRMED allowed
+
+    // ["CONFIRMED"].includes("DELIVERED") → false
+    // !false → true → blocked → 400 error
+
+    // ---
+    // Example 2 — Admin does CONFIRMED → SHIPPED (correct):
+    // orderItem.status = "CONFIRMED"
+    // validTransitions["CONFIRMED"] = ["SHIPPED", "PENDING"]
+
+    // ["SHIPPED", "PENDING"].includes("SHIPPED") → true
+    // !true → false → NOT blocked → continues
+
+    const result = await prisma.$transaction(async (tx) => {
+      await tx.orderItem.update({
+        where: {
+          id: orderItemId,
+        },
+        data: { status, ...timestampField[status] },
+        // If admin sets SHIPPED:
+        // - status = "SHIPPED"
+        // - timestampField["SHIPPED"] = { shippedAt: new Date() }
+        // - Spread gives: { status: "SHIPPED", shippedAt: "2026-04-24T..." }
+        // - Both status AND timestamp saved together in one update
+
+        // Step 1 — timestampField[status] gets the object for that status:
+        // timestampField["SHIPPED"]
+        // → { shippedAt: new Date() }
+        // → { shippedAt: "2026-04-24T10:30:00" }
+
+        // ---
+        // Step 2 — ... spreads that object, pulling out its key-value pairs:
+        // ...{ shippedAt: "2026-04-24T10:30:00" }
+        // → shippedAt: "2026-04-24T10:30:00"
+
+        // ---
+        // Step 3 — combines with status:
+        // { status, ...timestampField[status] }
+        // → { status: "SHIPPED", shippedAt: "2026-04-24T10:30:00" }
+      });
+
+      const allItems = await tx.orderItem.findMany({
+        where: {
+          orderId: orderItem.orderId,
+        },
+      });
+
+      const allDelivered = allItems.every((i) => i.status === "DELIVERED");
+      const anyDelivered = allItems.some((i) => i.status === "DELIVERED");
+      const anyCancelled = allItems.some((i) => i.status === "CANCELLED");
+      const allCancelled = allItems.every((i) => i.status === "CANCELLED");
+
+      let newOrderStatus = null;
+
+      if (allDelivered) {
+        newOrderStatus = "DELIVERED";
+      } else if (anyDelivered) {
+        newOrderStatus = "PARTIALLY_DELIVERED";
+      } else if (allCancelled) {
+        newOrderStatus = null;
+      } else if (anyCancelled) {
+        newOrderStatus = "PARTIALLY_CANCELLED";
+      } else {
+        newOrderStatus = "CONFIRMED";
+      }
+
+      // Case 1 — allDelivered → DELIVERED
+      // Items: [DELIVERED, DELIVERED, DELIVERED]
+      // every() → all are DELIVERED → true
+      // → order = DELIVERED
+
+      // ---
+      // Case 2 — anyDelivered → PARTIALLY_DELIVERED
+      // Items: [DELIVERED, SHIPPED, CONFIRMED]
+      // some() → at least one DELIVERED → true
+      // → order = PARTIALLY_DELIVERED
+
+      // Items: [DELIVERED, DELIVERED, CANCELLED]
+      // some() → at least one DELIVERED → true
+      // → order = PARTIALLY_DELIVERED
+
+      // ---
+      // Case 3 — allCancelled → no change
+      // Items: [CANCELLED, CANCELLED, CANCELLED]
+      // every() → all CANCELLED → true
+      // → newOrderStatus = null → order NOT updated
+      // → stays CANCELLED (already set by cancel API)
+
+      // ---
+      // Case 4 — anyCancelled → PARTIALLY_CANCELLED
+      // Items: [CANCELLED, SHIPPED, CONFIRMED]
+      // some() → at least one CANCELLED → true
+      // no DELIVERED items (anyDelivered = false)
+      // → order = PARTIALLY_CANCELLED
+
+      // Items: [CANCELLED, PENDING, OUT_FOR_DELIVERY]
+      // → order = PARTIALLY_CANCELLED
+
+      // ---
+      // Case 5 — else → CONFIRMED
+      // Items: [PENDING, CONFIRMED, SHIPPED]
+      // no DELIVERED, no CANCELLED
+      // → order = CONFIRMED
+
+      // Items: [SHIPPED, OUT_FOR_DELIVERY, CONFIRMED]
+      // no DELIVERED, no CANCELLED
+      // → order = CONFIRMED
+
+      // ---
+      // Order of checks matters:
+      // - allDelivered first — if all delivered, don't fall into anyDelivered
+      // - anyDelivered second — even one delivered overrides everything
+      // - allCancelled third — skip update, cancel API owns this
+      // - anyCancelled fourth — some cancelled, none delivered
+      // - else last — everything in progress, no cancelled, no delivered
+
+      if (newOrderStatus) {
+        await tx.order.update({
+          where: { id: orderItem.orderId },
+          data: { status: newOrderStatus },
+        });
+      }
+      // Case 1 — newOrderStatus = null (allCancelled)
+      // Items: [CANCELLED, CANCELLED]
+      // newOrderStatus = null
+      // if (null) → false → order.update NOT called
+      // → order stays CANCELLED
+
+      // ---
+      // Case 2 — newOrderStatus = "CONFIRMED"
+      // Items: [CONFIRMED, SHIPPED, PENDING]
+      // newOrderStatus = "CONFIRMED"
+      // if ("CONFIRMED") → true → order.update called
+      // → order = CONFIRMED
+
+      // ---
+      // Case 3 — newOrderStatus = "PARTIALLY_DELIVERED"
+      // Items: [DELIVERED, SHIPPED, CONFIRMED]
+      // newOrderStatus = "PARTIALLY_DELIVERED"
+      // if ("PARTIALLY_DELIVERED") → true → order.update called
+      // → order = PARTIALLY_DELIVERED
+
+      // ---
+      // Case 4 — newOrderStatus = "DELIVERED"
+      // Items: [DELIVERED, DELIVERED, DELIVERED]
+      // newOrderStatus = "DELIVERED"
+      // if ("DELIVERED") → true → order.update called
+      // → order = DELIVERED
+
+      // ---
+      // Case 5 — newOrderStatus = "PARTIALLY_CANCELLED"
+      // Items: [CANCELLED, SHIPPED, CONFIRMED]
+      // newOrderStatus = "PARTIALLY_CANCELLED"
+      // if ("PARTIALLY_CANCELLED") → true → order.update called
+      // → order = PARTIALLY_CANCELLED
+
+      return { newOrderStatus };
+    });
+
+    return res.status(200).json({
+      message: "Order item status updated successfully",
+      data: {
+        orderItemId,
+        newStatus: status,
+        orderStatus: result.newOrderStatus,
+      },
+    });
+  } catch (error) {
+    console.error(error);
+    return res
+      .status(500)
+      .json({ message: "Failed to update order item status" });
   }
 };

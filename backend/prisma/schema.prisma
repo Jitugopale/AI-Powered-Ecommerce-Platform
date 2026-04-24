@@ -235,10 +235,11 @@ model Payment{
 model Invoice{
   id Int @id @default(autoincrement())
   orderId Int 
-  orderItemId Int? @unique
+  orderItemId Int @unique
   paymentId Int 
   invoiceNumber String @unique
   status InvoiceStatus @default(UNPAID)
+  razorpayRefundId String? @unique
   issuedAt DateTime @default(now())
   paidAt DateTime?
   cancelledAt DateTime?
@@ -246,7 +247,7 @@ model Invoice{
   updatedAt DateTime @updatedAt
 
   order Order @relation(fields: [orderId], references: [id])
-  orderItem OrderItem? @relation(fields: [orderItemId], references: [id])
+  orderItem OrderItem @relation(fields: [orderItemId], references: [id])
   payment Payment @relation(fields: [paymentId], references: [id])
 
   @@map("invoices")
