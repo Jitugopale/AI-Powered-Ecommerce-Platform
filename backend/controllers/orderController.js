@@ -1147,3 +1147,52 @@ export const adminUpdateOrderItemStatusController = async (req, res) => {
       .json({ message: "Failed to update order item status" });
   }
 };
+
+export const getOrderItemByIdController = async(req,res)=>{
+  const userId = Number(req.user.id);
+  const orderItemId = Number(req.params.orderItemId);
+  if(isNaN(orderItemId)){
+    return res.status(400).json({
+      message:"Invalid orderItem"
+    })
+  }
+  try {
+    const orderItem = await prisma.orderItem.findFirst({
+      where:{
+        id:orderItemId
+      },
+      include:{
+        product:true,
+        invoice:true,
+        order:{
+          include:{
+            payment:true,
+            address:true
+          }
+        }
+      }
+    })
+
+    if(!orderItem){
+      return res.status(404).json({
+        message:"Order item not found"
+      })
+    }
+
+    if(orderItem.order.userId !== userId){
+      return res.status(403).json({
+        message:"Not authorized"
+      })
+    }
+
+    return res.status(200).json({
+      message:"Fetched OrderItem Successfully",
+      data:orderItem
+    })
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      message:"Failed to fetch OrderItem"
+    })
+  }
+}
