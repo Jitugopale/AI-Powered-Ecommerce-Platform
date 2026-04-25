@@ -87,3 +87,58 @@ export const getProductByIdController = async (req, res) => {
       .json({ message: "Failed to get product" });
   }
 };
+
+export const updateProductController = async(req,res) =>{
+  const productId = Number(req.params.id);
+  if(isNaN(productId)){
+    return res.status(400).json({
+      message:"Invalid productId"
+    })
+  }
+
+  const { name, description, price, brand, categoryId } = req.body;
+  
+  if(!name && !description && !price && !brand && !categoryId){
+    return res.status(400).json({
+      message:"At least one field is required"
+    })
+  }
+
+  try {
+    const product = await prisma.product.findUnique({
+      where:{
+        id:productId
+      }
+    })
+    if(!product){
+      return res.status(404).json({
+        message:"Product not found"
+      })
+    }
+
+    const updateData = {}
+    if(name) updateData.name = name
+    if(description) updateData.description = description
+    if(price) updateData.price = price
+    if(brand) updateData.brand = brand
+    if(categoryId) updateData.categoryId = categoryId
+
+    const updateProduct = await prisma.product.update({
+      where:{
+        id:productId
+      },
+      data:updateData
+    })
+
+    return res.status(200).json({
+      message:"Updated product sucessfully",
+      data: updateProduct
+    })
+
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      message:"Failed to updated product"
+    })
+  }
+}
