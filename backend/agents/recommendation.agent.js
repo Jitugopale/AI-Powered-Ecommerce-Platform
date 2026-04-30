@@ -10,10 +10,10 @@ export async function handleRecommendationQuery(productId) {
   });
 
   if (!product) {
-    return res.status(404).json({
+    return{
       answer: "Product not found.",
       source: "recommendation",
-    });
+    };
   }
 
   const otherProducts = await prisma.product.findMany({
