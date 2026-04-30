@@ -6,6 +6,7 @@ import productRouter from "./productRoutes.js";
 import inventoryRouter from "./inventoryRoutes.js";
 import cartRouter from "./cartRoutes.js";
 import orderRouter from "./orderRoutes.js";
+import recommendationRouter from "./recommendationRoutes.js";
 
 const rootRouter = express.Router();
 
@@ -16,5 +17,6 @@ rootRouter.use('/product',productRouter)
 rootRouter.use('/inventory',inventoryRouter)
 rootRouter.use('/cart',cartRouter)
 rootRouter.use('/order',orderRouter)
+rootRouter.use('/recommendation',recommendationRouter)
 
 export default rootRouter;
