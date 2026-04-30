@@ -150,7 +150,7 @@ export const updateProfileController = async (req, res) => {
         id: userId,
       },
       data: updatedData,
-      select: {
+      select: { 
         id: true,
         name: true,
         email: true,
