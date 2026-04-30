@@ -10,10 +10,10 @@ export async function handleRecommendationQuery(productId) {
   });
 
   if (!product) {
-    return {
+    return res.status(404).json({
       answer: "Product not found.",
       source: "recommendation",
-    };
+    });
   }
 
   const otherProducts = await prisma.product.findMany({
@@ -34,37 +34,68 @@ export async function handleRecommendationQuery(productId) {
       (p) =>
         `ID:${p.id} | ${p.name} | ${p.category.name} | ${p.brand} | ₹${p.price}`,
     )
-    .join("\n");
+    .join("\n"); //combine all array items into ONE string
+  //ID:3 | Nike Running Shoes | Sports | Nike | ₹3999
+  // ID:4 | Levi's Jeans | Fashion | Levi's | ₹2499
+  // ID:5 | Tata Salt 1kg | Groceries | Tata | ₹25
+  console.log("recommend", productList);
 
-  const prompt = `Which product IDs from this list are most similar to "${product.name}" (${product.category.name})?
+  //giving product data + getting similar product IDs
+  const prompt = `
+From the list below, select ONLY products that are truly similar to "${product.name}" (${product.category.name}).
+
+Strict rules:
+- Must belong to the SAME category
+- Must be logically similar product type
+- Ignore unrelated items
 
 ${productList}
 
-Reply with only the IDs as numbers separated by commas. Example: 2,3,4
-Answer:`;
+Return ONLY IDs as comma-separated values (e.g., 2,3)
+Answer:
+`;
 
+  //send the prompt to AI
   const reply = await ollamaGenerate(prompt, {
     model: process.env.OLLAMA_MODEL,
     stream: false,
   });
 
   console.log("LLM raw reply:", reply);
+  //   LLM raw reply: Here are the IDs of products that are most similar to "Samsung 55 incch TV" (Electronics):
 
-  // extract all numbers found anywhere in the response
-  let recommendedIds = [];
-  const numbers = reply?.match(/\b\d+\b/g);
+  //     ID:2 - iPhone 15
+  //     ID:3 - Nikes Running Shoes
+  //     ID:4 - Levis Jeanes
+
+  let recommendedIds = []; //store final IDs
+  const numbers = reply?.match(/\b\d+\b/g); //match() - finds things in a string using a pattern
+  ///\b\d+\b/g - Find all numbers in the text const numbers = ["2", "3", "4"];
+  //regex pattern \d = digit (0–9) | + = one or more => 1, 23, 456
+  // \b - word boundary (match full number only) ID:123abc 45 => 45
+  // /g - Find ALL matches in the string(with g only first match)
   if (numbers) {
-    recommendedIds = numbers.map(Number);
+    recommendedIds = numbers.map(Number); //Convert strings → numbers
+    //[2, 3, 4]
   }
 
-  const validIds = otherProducts.map((p) => p.id);
-  const filteredIds = recommendedIds.filter((id) => validIds.includes(id));
+  const validIds = otherProducts.map((p) => p.id); //Take all products from DB Extract only their IDs
+//otherProducts = [{ id: 2 },{ id: 3 },{ id: 5 }]; => validIds = [2, 3, 5];
+  const filteredIds = recommendedIds.filter((id) => validIds.includes(id)); //Keep only IDs that exist in DB
+//recommendedIds = [2, 3, 4]
+//validIds = [2, 3, 5]
+//filteredIds = [2, 3];
 
   const recommendedProducts = await prisma.product.findMany({
-    where: { id: { in: filteredIds }, is_active: true },
+    where: { id: { in: filteredIds }, is_active: true }, //id: { in: filteredIds } - Get products whose ID is in this list
+    //Get products where id = 2 OR id = 3
     include: { category: true, inventory: true },
   });
 
+  //Match products with IDs AND keep the same order as AI returned
+  //   filteredIds = [3, 2];
+  // recommendedProducts = [{ id: 2, name: "iPhone" },{ id: 3, name: "Shoes" }]; - keep ai order (3,2)
+  // o => [{ id: 3, name: "Shoes" },{ id: 2, name: "iPhone" }]
   const sorted = filteredIds
     .map((id) => recommendedProducts.find((p) => p.id === id))
     .filter(Boolean);
