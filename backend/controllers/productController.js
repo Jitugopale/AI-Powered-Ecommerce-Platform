@@ -143,6 +143,38 @@ export const updateProductController = async(req,res) =>{
   }
 }
 
+export const filterProductsController = async (req, res) => {
+  const { categoryId, brand, minPrice, maxPrice, search } = req.query;
+
+  try {
+    const where = { is_active: true };
+
+    if (categoryId) where.categoryId = Number(categoryId);
+    if (brand) where.brand = { contains: brand };
+    if (search) where.name = { contains: search };
+    if (minPrice || maxPrice) {
+      where.price = {};
+      if (minPrice) where.price.gte = Number(minPrice);
+      if (maxPrice) where.price.lte = Number(maxPrice);
+    }
+
+    const products = await prisma.product.findMany({
+      where,
+      include: { category: true, inventory: true },
+      orderBy: { createdAt: "desc" },
+    });
+
+    return res.status(200).json({
+      message: "Products filtered successfully",
+      total: products.length,
+      data: products,
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ message: "Failed to filter products" });
+  }
+};
+
 export const updateProductStatusController = async(req,res) =>{
   const productId = Number(req.params.id);
   if(isNaN(productId)){
